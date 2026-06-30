@@ -61,22 +61,27 @@ def stream_answer(client, query: str, context: str, images=None) -> str:
         if "deep-research" in model or st.session_state.get("enable_web_search", False):
             kwargs["tools"] = [{"type": "web_search_preview"}]
 
+        last_error = None
         try:
             return _stream_responses(kwargs)
-        except Exception:
+        except Exception as exc:
+            last_error = exc
             if "tools" in kwargs:
                 kwargs.pop("tools", None)
                 try:
                     return _stream_responses(kwargs)
-                except Exception:
-                    pass
+                except Exception as retry_exc:
+                    last_error = retry_exc
             try:
                 response = client.responses.create(**kwargs)
                 answer = response.output_text
                 placeholder.markdown(answer)
                 return answer
-            except Exception:
-                pass
+            except Exception as create_exc:
+                last_error = create_exc
+
+        if last_error is not None:
+            raise last_error
 
     answer = ""
     user_content = prompt
@@ -95,7 +100,6 @@ def stream_answer(client, query: str, context: str, images=None) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ],
-        temperature=st.session_state.temperature,
     ) as stream:
         for event in stream:
             if event.type == "content.delta":

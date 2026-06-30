@@ -5,9 +5,18 @@ import mimetypes
 import fitz
 import pandas as pd
 import streamlit as st
-from langchain_openai import OpenAIEmbeddings
 
-from state.config import ENC, TOKENS_PER_CHUNK, WORDS_PER_CHUNK_OVERLAP
+from ingestion.embedding_profiles import (
+    create_embedding_function,
+    format_embedding_documents,
+)
+from RAG.openai_compat import make_openai_client
+from state.config import (
+    ENC,
+    KB_EMBEDDING_BATCH_SIZE,
+    TOKENS_PER_CHUNK,
+    WORDS_PER_CHUNK_OVERLAP,
+)
 from state.schemas import ChunkMetadata, UploadBundle
 from ingestion.chunkers import chunk_text2
 from ingestion.cleaners import remove_junk_sections, remove_junk_lines
@@ -88,7 +97,16 @@ def _extract_text_from_upload(name, data):
 # ------------------------------
 # Uploaded files
 # ------------------------------
-def build_upload_bundle(uploaded_files, client, embedding_model, dimension, callbacks=None, api_key=None):
+def build_upload_bundle(
+    uploaded_files,
+    client,
+    embedding_model,
+    embedding_profile,
+    dimension,
+    callbacks=None,
+    api_key=None,
+    base_url=None,
+):
     """
     Build in-memory FAISS for uploaded *text-like* files and collect images.
     Returns: (upload_db, text_meta, images)
@@ -147,6 +165,8 @@ def build_upload_bundle(uploaded_files, client, embedding_model, dimension, call
                 chunk_id=i,
                 text=ch,
                 embedding_model=embedding_model,
+                embedding_profile=embedding_profile,
+                embedding_dimension=dimension,
             )
             text_meta.append(meta.model_dump())
 
@@ -164,16 +184,34 @@ def build_upload_bundle(uploaded_files, client, embedding_model, dimension, call
     # Build FAISS for uploaded text
     upload_db = None
     if text_chunks:
-        batch_size = 64
-        embs = []
-        for i in range(0, len(text_chunks), batch_size):
-            batch = text_chunks[i : i + batch_size]
-            resp = client.embeddings.create(input=batch, model=embedding_model)
-            embs.extend([d.embedding for d in resp.data])
-
-        embedding_fn = OpenAIEmbeddings(
-            model=embedding_model,
+        embedding_client = make_openai_client(
             api_key=api_key or st.session_state.api_key,
+            base_url=base_url,
+            fallback_to_env=False,
+        )
+        embs = []
+        for i in range(0, len(text_chunks), KB_EMBEDDING_BATCH_SIZE):
+            batch = text_chunks[i : i + KB_EMBEDDING_BATCH_SIZE]
+            resp = embedding_client.embeddings.create(
+                input=format_embedding_documents(
+                    model_name=embedding_model,
+                    texts=batch,
+                    profile_name=embedding_profile,
+                ),
+                model=embedding_model,
+            )
+            embs.extend([d.embedding for d in resp.data])
+        if embs and not dimension:
+            dimension = len(embs[0])
+            for meta in text_meta:
+                meta["embedding_dimension"] = dimension
+
+        embedding_fn = create_embedding_function(
+            model=embedding_model,
+            profile_name=embedding_profile,
+            api_key=api_key or st.session_state.api_key,
+            base_url=base_url,
+            fallback_to_env=False,
         )
         _, upload_db, _ = build_faiss_from_embeddings(
             embs,
@@ -189,9 +227,11 @@ def process_uploads_for_session(
     uploaded_files,
     client,
     embedding_model,
+    embedding_profile,
     dimension,
     callbacks=None,
     api_key=None,
+    base_url=None,
 ):
     """Build uploads and store results in Streamlit session_state.
 
@@ -207,9 +247,11 @@ def process_uploads_for_session(
         uploaded_files=uploaded_files,
         client=client,
         embedding_model=embedding_model,
+        embedding_profile=embedding_profile,
         dimension=dimension,
         callbacks=callbacks,
         api_key=api_key,
+        base_url=base_url,
     )
 
     st.session_state.upload_db = upload_db

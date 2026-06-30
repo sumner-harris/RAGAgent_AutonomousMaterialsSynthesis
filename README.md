@@ -137,7 +137,8 @@ This is required for generating/using embeddings + GPT responses.
 
 ### 3. Ask Questions / Hypothesis Tuning  
 - Enter your query in the text area (e.g., *“How can PLD parameters be tuned to minimize graphene damage during remote epitaxy?”*).  
-- The system retrieves **top-k diverse chunks** (default k=50), augments them with your query, and sends them to the GPT model. The UI allows you to control different configurations e.g., diversity of the retrieved contexts.  
+- Select a single retrieval method before answering. Options include vector search, BM25, hybrid retrieval, hybrid with query expansion/compression, and GraphRAG. Only the selected method is executed for that question.  
+- The system retrieves **top-k diverse chunks** when you choose an FAISS/MMR-based method, augments them with your query, and sends them to the GPT model. The UI allows you to control different configurations e.g., diversity of the retrieved contexts.  
 - Output includes: OpenAI's SOTA model response based on the query and the context (e.g., Hypothesis statement, Suggested PLD parameter ranges, Rationale with inline citations, etc.)
 
 ### 4. Experimental Feedback Loop  
@@ -188,6 +189,7 @@ If you already have a knowledge base built, simply load it by specifying the pat
 ### 4. Ask Questions with RAG  
 Once the knowledge base is ready, you can:  
 - Select a GPT model for answering queries.  
+- Choose exactly one retrieval method for each question.  
 - Control **diversity** and **creativity** of responses.  
 - Provide a research question to receive a **RAG-informed response**.  
 - View references and expand the retrieved context to better understand which sources were used.  

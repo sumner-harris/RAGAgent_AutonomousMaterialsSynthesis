@@ -4,7 +4,13 @@ import pytest
 from langchain_openai import OpenAIEmbeddings
 from openai import OpenAI
 
-from RAG.services.kb_service import append_kb, build_kb, load_kb
+from RAG.services.kb_service import (
+    GraphRAGWorkspaceError,
+    _append_graphrag,
+    append_kb,
+    build_kb,
+    load_kb,
+)
 from state.config import ENC
 
 
@@ -27,6 +33,66 @@ def test_load_kb_dummy(dummy_kb):
     )
     assert result["status"] == "ok"
     assert result["chunk_count"] == 1
+
+
+def test_append_graphrag_uses_incremental_update_mode(tmp_path, monkeypatch):
+    workspace = tmp_path / "graphrag"
+    input_dir = workspace / "input"
+    output_dir = workspace / "output"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir()
+    (workspace / "settings.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_run_graphrag_cli(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setattr(
+        "RAG.services.kb_service.run_graphrag_cli",
+        fake_run_graphrag_cli,
+    )
+
+    _append_graphrag(
+        {"doc1.pdf": "new graph text"},
+        str(workspace),
+        "test-key",
+        "http://nvidiaspark:8000/v1",
+        "http://nvidiaspark:8001/v1",
+        "gemma-4-31b-it",
+        "vllm-sfr-embedding-mistral",
+    )
+
+    assert captured["kwargs"]["mode"] == "update"
+    assert (input_dir / "doc1.txt").read_text(encoding="utf-8") == "new graph text"
+
+
+def test_append_graphrag_raises_when_incremental_update_fails(tmp_path, monkeypatch):
+    workspace = tmp_path / "graphrag"
+    (workspace / "input").mkdir(parents=True)
+    (workspace / "output").mkdir()
+    (workspace / "settings.yaml").write_text("models: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "RAG.services.kb_service.run_graphrag_cli",
+        lambda *args, **kwargs: False,
+    )
+
+    with pytest.raises(
+        GraphRAGWorkspaceError,
+        match="GraphRAG incremental update failed",
+    ):
+        _append_graphrag(
+            {"doc1.pdf": "new graph text"},
+            str(workspace),
+            "test-key",
+            "http://nvidiaspark:8000/v1",
+            "http://nvidiaspark:8001/v1",
+            "gemma-4-31b-it",
+            "vllm-sfr-embedding-mistral",
+        )
 
 
 @pytest.mark.integration
